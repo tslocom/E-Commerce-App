@@ -33,8 +33,29 @@ const cartSlice = createSlice({
 
 export const { addToCart, removeFromCart, clearCart } = cartSlice.actions;
 
+const authSlice = createSlice({
+  name: 'auth',
+  initialState: {
+    user: null,
+    isAuthenticated: false,
+  },
+  reducers: {
+    setUser: (state, action) => {
+      state.user = action.payload;
+      state.isAuthenticated = !!action.payload;
+    },
+    logoutAction: (state) => {
+      state.user = null;
+      state.isAuthenticated = false;
+    }
+  }
+});
+
+export const { setUser, logoutAction } = authSlice.actions;
+
 export const store = configureStore({
   reducer: {
-    cart: cartSlice.reducer
+    cart: cartSlice.reducer,
+    auth: authSlice.reducer
   }
 });

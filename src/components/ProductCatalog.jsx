@@ -1,71 +1,220 @@
-import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useMemo, useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useDispatch } from 'react-redux';
 import { addToCart } from '../services/store.js';
+import { createProduct, deleteProduct, fetchProducts, updateProduct } from '../services/productService';
+
+const emptyProduct = {
+  title: '',
+  category: '',
+  price: '',
+  stock: '',
+  image: '',
+  description: '',
+};
 
 function ProductCatalog() {
   const dispatch = useDispatch();
-  const [selectedCategory, setSelectedCategory] = useState('');
+  const queryClient = useQueryClient();
+  const [selectedCategory, setSelectedCategory] = useState('all');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [editingProductId, setEditingProductId] = useState('');
+  const [formData, setFormData] = useState(emptyProduct);
 
-  // Fetch categories for dropdown
-  const { data: categories = [] } = useQuery({
-    queryKey: ['categories'],
-    queryFn: () => fetch('https://fakestoreapi.com/products/categories').then(res => res.json())
+  const productsQuery = useQuery({
+    queryKey: ['products'],
+    queryFn: fetchProducts,
   });
 
-  // fethc products based on category selection
-  const { data: products = [], isLoading, isError } = useQuery({
-    queryKey: ['products', selectedCategory],
-    queryFn: () => {
-      const url = selectedCategory 
-        ? `https://fakestoreapi.com/products/category/${selectedCategory}`
-        : 'https://fakestoreapi.com/products';
-      return fetch(url).then(res => res.json());
-    }
+  const products = useMemo(() => productsQuery.data ?? [], [productsQuery.data]);
+
+  const categories = useMemo(
+    () => Array.from(new Set(products.map((product) => product.category).filter(Boolean))).sort(),
+    [products],
+  );
+
+  const visibleProducts = products.filter((product) => {
+    const matchesCategory = selectedCategory === 'all' || product.category === selectedCategory;
+    const normalizedSearch = searchTerm.trim().toLowerCase();
+    const matchesSearch =
+      normalizedSearch.length === 0 ||
+      `${product.title} ${product.description} ${product.category}`.toLowerCase().includes(normalizedSearch);
+
+    return matchesCategory && matchesSearch;
   });
 
-  const handleImageError = (e) => {
-    e.target.src = 'https://via.placeholder.com/150?text=No+Image';
+  const saveMutation = useMutation({
+    mutationFn: async (payload) => {
+      if (editingProductId) {
+        return updateProduct(editingProductId, payload);
+      }
+
+      return createProduct(payload);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['products'] });
+      setEditingProductId('');
+      setFormData(emptyProduct);
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: deleteProduct,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['products'] });
+    },
+  });
+
+  const handleChange = (event) => {
+    const { name, value } = event.target;
+    setFormData((current) => ({ ...current, [name]: value }));
   };
 
-  if (isLoading) return <div>Loading products...</div>;
-  if (isError) return <div>Error loading data from FakeStoreAPI</div>;
+  const handleSubmit = async (event) => {
+    event.preventDefault();
+    await saveMutation.mutateAsync(formData);
+  };
+
+  const handleEdit = (product) => {
+    setEditingProductId(product.id);
+    setFormData({
+      title: product.title ?? '',
+      category: product.category ?? '',
+      price: product.price ?? '',
+      stock: product.stock ?? '',
+      image: product.image ?? '',
+      description: product.description ?? '',
+    });
+  };
+
+  const handleDelete = async (productId) => {
+    if (!window.confirm('Delete this product from Firestore?')) {
+      return;
+    }
+
+    await deleteMutation.mutateAsync(productId);
+  };
+
+  const handleCancel = () => {
+    setEditingProductId('');
+    setFormData(emptyProduct);
+  };
+
+  const handleImageError = (event) => {
+    event.currentTarget.src = 'https://via.placeholder.com/160?text=No+Image';
+  };
 
   return (
-    <div>
-      <h2>Product Catalog</h2>
-      
-      <div style={{ marginBottom: '20px' }}>
-        <label htmlFor="category-select">Filter by Category: </label>
-        <select 
-          id="category-select"
-          value={selectedCategory} 
-          onChange={(e) => setSelectedCategory(e.target.value)}>
-          <option value="">All Categories</option>
-          {categories.map(cat => (
-            <option key={cat} value={cat}>{cat}</option>
-          ))}
-        </select>
+    <section className="panel">
+      <div className="panel-header">
+        <div>
+          <p className="eyebrow">Firestore catalog</p>
+          <h2>Products</h2>
+        </div>
+        <p className="panel-meta">Create, edit, and delete catalog records.</p>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
-        {products.map(product => (
-          <div key={product.id} style={{ border: '1px solid #ddd', padding: '15px', borderRadius: '5px' }}>
-            <img 
-              src={product.image} 
-              alt={product.title} 
-              onError={handleImageError}
-              style={{ width: '100px', height: '100px', objectFit: 'contain' }}/>
-            <h3>{product.title}</h3>
-            <p><strong>Category:</strong> {product.category}</p>
-            <p>{product.description}</p>
-            <p><strong>Rating:</strong> {product.rating?.rate} / 5</p>
-            <p><strong>Price:</strong> ${product.price}</p>
-            <button onClick={() => dispatch(addToCart(product))}>Add to Cart</button>
-          </div>
-        ))}
+      <div className="toolbar">
+        <label className="field field-inline">
+          <span>Search</span>
+          <input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder="Search products" />
+        </label>
+
+        <label className="field field-inline">
+          <span>Category</span>
+          <select value={selectedCategory} onChange={(event) => setSelectedCategory(event.target.value)}>
+            <option value="all">All categories</option>
+            {categories.map((category) => (
+              <option key={category} value={category}>
+                {category}
+              </option>
+            ))}
+          </select>
+        </label>
       </div>
-    </div>
+
+      <form className="stack-form product-form" onSubmit={handleSubmit}>
+        <div className="form-grid">
+          <label className="field">
+            <span>Title</span>
+            <input name="title" value={formData.title} onChange={handleChange} required />
+          </label>
+
+          <label className="field">
+            <span>Category</span>
+            <input name="category" value={formData.category} onChange={handleChange} required />
+          </label>
+
+          <label className="field">
+            <span>Price</span>
+            <input name="price" type="number" step="0.01" min="0" value={formData.price} onChange={handleChange} required />
+          </label>
+
+          <label className="field">
+            <span>Stock</span>
+            <input name="stock" type="number" min="0" value={formData.stock} onChange={handleChange} />
+          </label>
+        </div>
+
+        <label className="field">
+          <span>Image URL</span>
+          <input name="image" value={formData.image} onChange={handleChange} placeholder="https://..." />
+        </label>
+
+        <label className="field">
+          <span>Description</span>
+          <textarea name="description" rows="4" value={formData.description} onChange={handleChange} />
+        </label>
+
+        <div className="button-row">
+          <button type="submit" className="primary-button" disabled={saveMutation.isPending}>
+            {saveMutation.isPending ? 'Saving...' : editingProductId ? 'Update product' : 'Create product'}
+          </button>
+          {editingProductId && (
+            <button type="button" className="ghost-button" onClick={handleCancel}>
+              Cancel edit
+            </button>
+          )}
+        </div>
+
+        {saveMutation.isError && <div className="notice error">{saveMutation.error?.message ?? 'Unable to save product.'}</div>}
+      </form>
+
+      {productsQuery.isLoading ? (
+        <p className="muted-copy">Loading products from Firestore...</p>
+      ) : productsQuery.isError ? (
+        <p className="notice error">Unable to load products.</p>
+      ) : (
+        <div className="product-grid">
+          {visibleProducts.map((product) => (
+            <article className="product-card" key={product.id}>
+              <img src={product.image || 'https://via.placeholder.com/320x220?text=Product'} alt={product.title} onError={handleImageError} />
+              <div className="product-card-body">
+                <div className="product-card-header">
+                  <div>
+                    <p className="label">{product.category || 'Uncategorized'}</p>
+                    <h3>{product.title}</h3>
+                  </div>
+                  <strong>${Number(product.price ?? 0).toFixed(2)}</strong>
+                </div>
+                <p className="muted-copy clamp-text">{product.description}</p>
+                <div className="product-actions">
+                  <button type="button" className="primary-button compact" onClick={() => dispatch(addToCart(product))}>
+                    Add to cart
+                  </button>
+                  <button type="button" className="ghost-button compact" onClick={() => handleEdit(product)}>
+                    Edit
+                  </button>
+                  <button type="button" className="danger-button compact" onClick={() => handleDelete(product.id)}>
+                    Delete
+                  </button>
+                </div>
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 
